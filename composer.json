@@ -3,6 +3,7 @@
     "description": "A PHP Circuit Breaker implementation to prevent cascading failures",
     "type": "library",
     "keywords": ["circuit-breaker", "fault-tolerance", "resilience"],
+    "homepage": "https://github.com/ChiragAgg5k/circuit-breaker",
     "license": "MIT",
     "authors": [
         {
@@ -24,6 +25,10 @@
         "psr-4": {
             "ChiragAgg5k\\Tests\\": "tests/"
         }
+    },
+    "support": {
+        "issues": "https://github.com/ChiragAgg5k/circuit-breaker/issues",
+        "source": "https://github.com/ChiragAgg5k/circuit-breaker"
     },
     "minimum-stability": "stable",
     "prefer-stable": true
