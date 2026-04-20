@@ -20,6 +20,7 @@ A Circuit Breaker is a design pattern used to detect failures and prevent an app
 - ✅ Automatic state transitions
 - ✅ State inspection methods
 - ✅ Simple and lightweight implementation
+- ✅ Optional Redis and Swoole Table cache adapters for shared state
 - ✅ PSR-4 autoloading compatible
 - ✅ PHP 8.1+ support with enums
 
@@ -93,6 +94,48 @@ $data = $breaker->call(
 );
 ```
 
+### Shared Cache State
+
+By default, each `CircuitBreaker` instance keeps state in memory. To share circuit state between PHP workers, pass a cache adapter and a stable `cacheKey`.
+
+#### Redis
+
+```php
+use ChiragAgg5k\CircuitBreaker\Adapter\Redis as RedisAdapter;
+use ChiragAgg5k\CircuitBreaker;
+
+$redis = new \Redis();
+$redis->connect('127.0.0.1');
+
+$breaker = new CircuitBreaker(
+    threshold: 5,
+    timeout: 60,
+    successThreshold: 2,
+    cache: new RedisAdapter($redis),
+    cacheKey: 'users-api'
+);
+```
+
+#### Swoole Table
+
+Use the Swoole adapter when workers need to share state through Swoole shared memory.
+
+```php
+use ChiragAgg5k\CircuitBreaker\Adapter\SwooleTable;
+use ChiragAgg5k\CircuitBreaker;
+
+$table = SwooleTable::createTable(size: 1024);
+$cache = new SwooleTable($table);
+
+$breaker = new CircuitBreaker(
+    threshold: 5,
+    timeout: 60,
+    successThreshold: 2,
+    cache: $cache,
+    cacheKey: 'users-api'
+);
+```
+
 ## How it Works
 
 The circuit breaker operates in three states:
@@ -123,6 +166,8 @@ This gradual recovery mechanism prevents overwhelming a service that's just star
 - `threshold` (int, default: 3): Number of failures before opening the circuit
 - `timeout` (int, default: 30): Seconds to wait before transitioning to half-open state
 - `successThreshold` (int, default: 2): Number of consecutive successes required to close the circuit from half-open state
+- `cache` (`?ChiragAgg5k\CircuitBreaker\Adapter`, default: `null`): Optional shared cache adapter
+- `cacheKey` (string, default: `default`): Cache namespace for one circuit's state
 
 ### Call Method Parameters
 
@@ -153,6 +198,22 @@ $breaker->getSuccessCount();  // Current success count (in half-open state)
 ## Requirements
 
 - PHP 8.1 or higher
+- Optional: `ext-redis` for `ChiragAgg5k\CircuitBreaker\Adapter\Redis`
+- Optional: `ext-swoole` for `ChiragAgg5k\CircuitBreaker\Adapter\SwooleTable`
+
+## Testing
+
+Unit tests avoid Redis and Swoole runtime dependencies:
+
+```bash
+composer test
+```
+
+E2E tests run Redis and a PHP runtime with Redis/Swoole extensions through Docker:
+
+```bash
+composer test:e2e:docker
+```
 
 ## License
 
