@@ -1,0 +1,137 @@
+<?php
+
+namespace ChiragAgg5k\Tests\unit;
+
+use ChiragAgg5k\CircuitBreaker;
+use ChiragAgg5k\CircuitBreaker\Adapter;
+use ChiragAgg5k\CircuitState;
+use PHPUnit\Framework\TestCase;
+
+final class CircuitBreakerTest extends TestCase
+{
+    public function testUsesInMemoryStateByDefault(): void
+    {
+        $breaker = new CircuitBreaker(threshold: 2, timeout: 30, successThreshold: 1);
+
+        $first = $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+        $second = $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        self::assertSame('fallback', $first);
+        self::assertSame('fallback', $second);
+        self::assertSame(CircuitState::OPEN, $breaker->getState());
+        self::assertSame(2, $breaker->getFailureCount());
+    }
+
+    public function testCachedStateIsSharedAcrossBreakerInstances(): void
+    {
+        $cache = $this->createArrayAdapter();
+        $first = new CircuitBreaker(threshold: 2, timeout: 30, successThreshold: 1, cache: $cache, cacheKey: 'users-api');
+        $second = new CircuitBreaker(threshold: 2, timeout: 30, successThreshold: 1, cache: $cache, cacheKey: 'users-api');
+
+        $first->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+        $first->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        self::assertTrue($second->isOpen());
+        self::assertSame(2, $second->getFailureCount());
+
+        $result = $second->call(
+            open: static fn () => 'shared fallback',
+            close: function (): void {
+                self::fail('Closed callback should not run while the shared circuit is open.');
+            }
+        );
+
+        self::assertSame('shared fallback', $result);
+    }
+
+    public function testHalfOpenSuccessesCloseTheCircuit(): void
+    {
+        $breaker = new CircuitBreaker(threshold: 1, timeout: 0, successThreshold: 2);
+
+        $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        self::assertSame('probe-1', $breaker->call(
+            open: static fn () => 'fallback',
+            close: static fn () => 'closed',
+            halfOpen: static fn () => 'probe-1'
+        ));
+        self::assertTrue($breaker->isHalfOpen());
+        self::assertSame(1, $breaker->getSuccessCount());
+
+        self::assertSame('probe-2', $breaker->call(
+            open: static fn () => 'fallback',
+            close: static fn () => 'closed',
+            halfOpen: static fn () => 'probe-2'
+        ));
+
+        self::assertTrue($breaker->isClosed());
+        self::assertSame(0, $breaker->getFailureCount());
+        self::assertSame(0, $breaker->getSuccessCount());
+    }
+
+    public function testRejectsEmptyCacheKeyWhenCacheIsConfigured(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new CircuitBreaker(cache: $this->createArrayAdapter(), cacheKey: '');
+    }
+
+    private function createArrayAdapter(): Adapter
+    {
+        return new class implements Adapter {
+            /**
+             * @var array<string, int|string>
+             */
+            private array $values = [];
+
+            public function get(string $key): int|string|null
+            {
+                return $this->values[$key] ?? null;
+            }
+
+            public function set(string $key, int|string $value): void
+            {
+                $this->values[$key] = $value;
+            }
+
+            public function increment(string $key, int $by = 1): int
+            {
+                $value = (int) ($this->values[$key] ?? 0);
+                $value += $by;
+                $this->values[$key] = $value;
+
+                return $value;
+            }
+
+            public function delete(string $key): void
+            {
+                unset($this->values[$key]);
+            }
+        };
+    }
+}

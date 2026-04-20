@@ -16,6 +16,10 @@
     "require-dev": {
         "phpunit/phpunit": "^10.0"
     },
+    "suggest": {
+        "ext-redis": "Required when using ChiragAgg5k\\CircuitBreaker\\Adapter\\Redis with the phpredis extension.",
+        "ext-swoole": "Required when using ChiragAgg5k\\CircuitBreaker\\Adapter\\SwooleTable."
+    },
     "autoload": {
         "psr-4": {
             "ChiragAgg5k\\": "src/"
@@ -25,6 +29,16 @@
         "psr-4": {
             "ChiragAgg5k\\Tests\\": "tests/"
         }
+    },
+    "scripts": {
+        "test": "@test:unit",
+        "test:unit": "phpunit --testsuite unit",
+        "test:e2e": "phpunit --testsuite e2e",
+        "test:e2e:docker": "sh -c 'docker compose -f docker-composer.yml up --build --abort-on-container-exit --exit-code-from php; status=$?; docker compose -f docker-composer.yml down -v --remove-orphans; exit $status'",
+        "test:all": [
+            "@test:unit",
+            "@test:e2e:docker"
+        ]
     },
     "support": {
         "issues": "https://github.com/ChiragAgg5k/circuit-breaker/issues",
