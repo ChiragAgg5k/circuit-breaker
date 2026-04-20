@@ -64,6 +64,103 @@ final class CircuitBreakerTest extends TestCase
         self::assertSame('shared fallback', $result);
     }
 
+    public function testClosedSuccessDoesNotWriteZeroFailuresWhenAlreadyZero(): void
+    {
+        $cache = new class implements Adapter {
+            /**
+             * @var list<array{string, string, int|string|null}>
+             */
+            public array $writes = [];
+
+            public function get(string $key): int|string|null
+            {
+                return null;
+            }
+
+            public function set(string $key, int|string $value): void
+            {
+                $this->writes[] = ['set', $key, $value];
+            }
+
+            public function increment(string $key, int $by = 1): int
+            {
+                $this->writes[] = ['increment', $key, $by];
+
+                return $by;
+            }
+
+            public function delete(string $key): void
+            {
+                $this->writes[] = ['delete', $key, null];
+            }
+        };
+        $breaker = new CircuitBreaker(threshold: 1, timeout: 30, successThreshold: 1, cache: $cache, cacheKey: 'users-api');
+
+        self::assertSame('ok', $breaker->call(
+            open: static fn () => 'fallback',
+            close: static fn () => 'ok'
+        ));
+
+        self::assertSame([], $cache->writes);
+    }
+
+    public function testCachedTransitionsWriteStateLast(): void
+    {
+        $cache = new class implements Adapter {
+            /**
+             * @var array<string, int|string>
+             */
+            private array $values = [];
+
+            /**
+             * @var list<array{string, string, int|string|null}>
+             */
+            public array $writes = [];
+
+            public function get(string $key): int|string|null
+            {
+                return $this->values[$key] ?? null;
+            }
+
+            public function set(string $key, int|string $value): void
+            {
+                $this->writes[] = ['set', $key, $value];
+                $this->values[$key] = $value;
+            }
+
+            public function increment(string $key, int $by = 1): int
+            {
+                $value = (int) ($this->values[$key] ?? 0);
+                $value += $by;
+                $this->writes[] = ['increment', $key, $by];
+                $this->values[$key] = $value;
+
+                return $value;
+            }
+
+            public function delete(string $key): void
+            {
+                $this->writes[] = ['delete', $key, null];
+                unset($this->values[$key]);
+            }
+        };
+        $breaker = new CircuitBreaker(threshold: 1, timeout: 30, successThreshold: 1, cache: $cache, cacheKey: 'users-api');
+
+        $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        $setWrites = array_values(array_filter(
+            $cache->writes,
+            static fn (array $write): bool => $write[0] === 'set'
+        ));
+
+        self::assertSame(['set', 'users-api:state', CircuitState::OPEN->value], $setWrites[array_key_last($setWrites)]);
+    }
+
     public function testHalfOpenSuccessesCloseTheCircuit(): void
     {
         $breaker = new CircuitBreaker(threshold: 1, timeout: 0, successThreshold: 2);

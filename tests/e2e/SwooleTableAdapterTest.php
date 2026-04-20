@@ -3,6 +3,7 @@
 namespace ChiragAgg5k\Tests\e2e;
 
 use ChiragAgg5k\CircuitBreaker;
+use ChiragAgg5k\CircuitBreaker\Adapter\AdapterException;
 use ChiragAgg5k\CircuitBreaker\Adapter\SwooleTable;
 use PHPUnit\Framework\TestCase;
 
@@ -28,10 +29,24 @@ final class SwooleTableAdapterTest extends TestCase
         self::assertSame(2, $second->get('failures'));
         self::assertSame(3, $second->increment('failures'));
         self::assertSame(3, $first->get('failures'));
+        self::assertSame(1, $first->increment('missing-counter'));
+        self::assertSame(1, $second->get('missing-counter'));
+        $first->set('empty-string', '');
+        self::assertSame('', $second->get('empty-string'));
 
         $first->delete('failures');
 
         self::assertNull($second->get('failures'));
+    }
+
+    public function testSwooleTableAdapterRejectsIncrementingStrings(): void
+    {
+        $adapter = new SwooleTable(SwooleTable::createTable(32), 'test:');
+        $adapter->set('state', 'open');
+
+        $this->expectException(AdapterException::class);
+
+        $adapter->increment('state');
     }
 
     public function testSwooleTableAdapterHashesLongKeysToFitTableLimits(): void

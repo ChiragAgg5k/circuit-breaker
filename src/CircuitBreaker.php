@@ -72,7 +72,9 @@ class CircuitBreaker
                 $this->transitionToClosed();
             }
         } elseif ($this->state === CircuitState::CLOSED) {
-            $this->setFailures(0);
+            if ($this->failures !== 0) {
+                $this->setFailures(0);
+            }
         }
     }
 
@@ -95,24 +97,24 @@ class CircuitBreaker
 
     private function transitionToOpen(): void
     {
-        $this->setState(CircuitState::OPEN);
         $this->setOpenedAt(time());
         $this->setSuccesses(0);
+        $this->setState(CircuitState::OPEN);
     }
 
     private function transitionToHalfOpen(): void
     {
-        $this->setState(CircuitState::HALF_OPEN);
         $this->setFailures(0);
         $this->setSuccesses(0);
+        $this->setState(CircuitState::HALF_OPEN);
     }
 
     private function transitionToClosed(): void
     {
-        $this->setState(CircuitState::CLOSED);
         $this->setFailures(0);
         $this->setSuccesses(0);
         $this->setOpenedAt(null);
+        $this->setState(CircuitState::CLOSED);
     }
 
     private function syncFromCache(): void

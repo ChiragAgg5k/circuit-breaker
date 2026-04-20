@@ -24,7 +24,11 @@ final class RedisAdapterTest extends TestCase
         $this->redis = new $redisClass();
 
         try {
-            $this->redis->connect($host, $port, 2.0);
+            if (!$this->redis->connect($host, $port, 2.0)) {
+                $error = method_exists($this->redis, 'getLastError') ? $this->redis->getLastError() : null;
+                $message = is_string($error) && $error !== '' ? ': ' . $error : '.';
+                self::markTestSkipped(sprintf('Redis E2E server is not reachable at %s:%d%s', $host, $port, $message));
+            }
         } catch (\Throwable $exception) {
             self::markTestSkipped('Redis E2E server is not reachable: ' . $exception->getMessage());
         }
