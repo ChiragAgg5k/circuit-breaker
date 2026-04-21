@@ -21,8 +21,9 @@ A Circuit Breaker is a design pattern used to detect failures and prevent an app
 - ✅ State inspection methods
 - ✅ Simple and lightweight implementation
 - ✅ Optional Redis and Swoole Table cache adapters for shared state
+- ✅ Native telemetry metrics through optional `utopia-php/telemetry` adapters
 - ✅ PSR-4 autoloading compatible
-- ✅ PHP 8.1+ support with enums
+- ✅ PHP 8.2+ support with enums
 
 ## Usage
 
@@ -136,6 +137,47 @@ $breaker = new CircuitBreaker(
 );
 ```
 
+### Telemetry
+
+Telemetry is opt-in. The `telemetry` constructor argument defaults to `null`, which emits no metrics and does not require `utopia-php/telemetry` at runtime. Install `utopia-php/telemetry` and pass any adapter to emit counters and gauges for calls, fallbacks, callback failures, transitions, state, failure counts, success counts, active calls, and transition/probe events.
+
+```bash
+composer require utopia-php/telemetry
+```
+
+```php
+use ChiragAgg5k\CircuitBreaker;
+use Utopia\Telemetry\Adapter\OpenTelemetry;
+
+$telemetry = new OpenTelemetry(
+    'http://otel-collector:4318/v1/metrics',
+    'backend',
+    'orders',
+    gethostname() ?: 'local'
+);
+
+$breaker = new CircuitBreaker(
+    threshold: 5,
+    timeout: 60,
+    successThreshold: 2,
+    cacheKey: 'orders-api',
+    telemetry: $telemetry
+);
+
+$result = $breaker->call(
+    open: fn () => ['fallback' => true],
+    close: fn () => $client->request('/orders')
+);
+
+$telemetry->collect();
+```
+
+You can also attach or replace the adapter after construction:
+
+```php
+$breaker->setTelemetry($telemetry);
+```
+
 ## How it Works
 
 The circuit breaker operates in three states:
@@ -168,6 +210,7 @@ This gradual recovery mechanism prevents overwhelming a service that's just star
 - `successThreshold` (int, default: 2): Number of consecutive successes required to close the circuit from half-open state
 - `cache` (`?ChiragAgg5k\CircuitBreaker\Adapter`, default: `null`): Optional shared cache adapter
 - `cacheKey` (string, default: `default`): Cache namespace for one circuit's state
+- `telemetry` (`?Utopia\Telemetry\Adapter`, default: `null`): Optional telemetry adapter
 
 ### Call Method Parameters
 
@@ -197,7 +240,8 @@ $breaker->getSuccessCount();  // Current success count (in half-open state)
 
 ## Requirements
 
-- PHP 8.1 or higher
+- PHP 8.2 or higher
+- Optional: `utopia-php/telemetry`, `ext-opentelemetry`, and `ext-protobuf` for OpenTelemetry metrics and the local telemetry demo
 - Optional: `ext-redis` for `ChiragAgg5k\CircuitBreaker\Adapter\Redis`
 - Optional: `ext-swoole` for `ChiragAgg5k\CircuitBreaker\Adapter\SwooleTable`
 
@@ -213,6 +257,34 @@ E2E tests run Redis and a PHP runtime with Redis/Swoole extensions through Docke
 
 ```bash
 composer test:e2e:docker
+```
+
+## Local Telemetry Demo
+
+Run the local demo stack to start Redis, an instrumented PHP demo server, OpenTelemetry Collector, Prometheus, and Grafana:
+
+```bash
+composer telemetry:up
+```
+
+- Demo UI: http://localhost:8080
+- Grafana: http://localhost:3030/d/circuit-breaker/circuit-breaker-telemetry
+- Prometheus: http://localhost:9090
+
+Preview from a five-minute `checkout-api` scenario:
+
+![Circuit breaker telemetry dashboard](docs/images/telemetry-dashboard.png)
+
+Populate the dashboard with the same scenario:
+
+```bash
+composer telemetry:scenario
+```
+
+Stop the stack and remove local volumes:
+
+```bash
+composer telemetry:down
 ```
 
 ## License
