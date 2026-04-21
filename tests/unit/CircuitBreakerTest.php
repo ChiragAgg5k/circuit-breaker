@@ -6,6 +6,7 @@ use ChiragAgg5k\CircuitBreaker;
 use ChiragAgg5k\CircuitBreaker\Adapter;
 use ChiragAgg5k\CircuitState;
 use PHPUnit\Framework\TestCase;
+use Utopia\Telemetry\Adapter\Test as TestTelemetry;
 
 final class CircuitBreakerTest extends TestCase
 {
@@ -66,7 +67,7 @@ final class CircuitBreakerTest extends TestCase
 
     public function testClosedSuccessDoesNotWriteZeroFailuresWhenAlreadyZero(): void
     {
-        $cache = new class implements Adapter {
+        $cache = new class () implements Adapter {
             /**
              * @var list<array{string, string, int|string|null}>
              */
@@ -106,7 +107,7 @@ final class CircuitBreakerTest extends TestCase
 
     public function testCachedTransitionsWriteStateLast(): void
     {
-        $cache = new class implements Adapter {
+        $cache = new class () implements Adapter {
             /**
              * @var array<string, int|string>
              */
@@ -191,6 +192,30 @@ final class CircuitBreakerTest extends TestCase
         self::assertSame(0, $breaker->getSuccessCount());
     }
 
+    public function testRecordsTelemetryForCallsFallbacksAndTransitions(): void
+    {
+        $telemetry = new TestTelemetry();
+        $breaker = new CircuitBreaker(threshold: 1, timeout: 30, successThreshold: 1, telemetry: $telemetry);
+
+        $result = $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        self::assertSame('fallback', $result);
+        self::assertSame([1], $telemetry->counters['circuit_breaker.calls']->values);
+        self::assertSame([1], $telemetry->counters['circuit_breaker.callback_failures']->values);
+        self::assertSame([1], $telemetry->counters['circuit_breaker.fallbacks']->values);
+        self::assertSame([1], $telemetry->counters['circuit_breaker.transitions']->values);
+        self::assertSame([1, -1], $telemetry->upDownCounters['circuit_breaker.active_calls']->values);
+        self::assertSame([1, 1], $telemetry->gauges['circuit_breaker.state']->values);
+        self::assertSame([1, 1], $telemetry->gauges['circuit_breaker.failures']->values);
+        self::assertSame([0, 0], $telemetry->gauges['circuit_breaker.successes']->values);
+        self::assertCount(1, $telemetry->gauges['circuit_breaker.event.timestamp']->values);
+    }
+
     public function testRejectsEmptyCacheKeyWhenCacheIsConfigured(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -200,7 +225,7 @@ final class CircuitBreakerTest extends TestCase
 
     private function createArrayAdapter(): Adapter
     {
-        return new class implements Adapter {
+        return new class () implements Adapter {
             /**
              * @var array<string, int|string>
              */

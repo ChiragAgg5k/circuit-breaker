@@ -99,6 +99,6 @@ final class Redis implements CircuitBreakerAdapter
             return $result->getPayload() === 'OK';
         }
 
-        return $result !== false && $result !== null;
+        return $result !== null;
     }
 }

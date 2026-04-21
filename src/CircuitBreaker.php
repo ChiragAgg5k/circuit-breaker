@@ -3,6 +3,11 @@
 namespace ChiragAgg5k;
 
 use ChiragAgg5k\CircuitBreaker\Adapter;
+use Utopia\Telemetry\Adapter as Telemetry;
+use Utopia\Telemetry\Adapter\None as NoTelemetry;
+use Utopia\Telemetry\Counter;
+use Utopia\Telemetry\Gauge;
+use Utopia\Telemetry\UpDownCounter;
 
 class CircuitBreaker
 {
@@ -15,42 +20,114 @@ class CircuitBreaker
     private int $failures = 0;
     private int $successes = 0;
     private ?int $openedAt = null;
+    private Counter $calls;
+    private Counter $callbackFailures;
+    private Counter $fallbacks;
+    private Counter $transitions;
+    private UpDownCounter $activeCalls;
+    private Gauge $stateGauge;
+    private Gauge $failuresGauge;
+    private Gauge $successesGauge;
+    private Gauge $eventTimestamp;
 
     public function __construct(
         private int $threshold = 3,
         private int $timeout = 30,
         private int $successThreshold = 2,
         private ?Adapter $cache = null,
-        private string $cacheKey = 'default'
+        private string $cacheKey = 'default',
+        ?Telemetry $telemetry = null
     ) {
         if ($this->cache !== null && $this->cacheKey === '') {
             throw new \InvalidArgumentException('Cache key must not be empty when a cache adapter is configured.');
         }
 
+        $this->setTelemetry($telemetry ?? new NoTelemetry());
         $this->syncFromCache();
+    }
+
+    public function setTelemetry(Telemetry $telemetry): void
+    {
+        $this->calls = $telemetry->createCounter('circuit_breaker.calls', '{call}');
+        $this->callbackFailures = $telemetry->createCounter('circuit_breaker.callback_failures', '{failure}');
+        $this->fallbacks = $telemetry->createCounter('circuit_breaker.fallbacks', '{fallback}');
+        $this->transitions = $telemetry->createCounter('circuit_breaker.transitions', '{transition}');
+        $this->activeCalls = $telemetry->createUpDownCounter('circuit_breaker.active_calls', '{call}');
+        $this->stateGauge = $telemetry->createGauge('circuit_breaker.state');
+        $this->failuresGauge = $telemetry->createGauge('circuit_breaker.failures', '{failure}');
+        $this->successesGauge = $telemetry->createGauge('circuit_breaker.successes', '{success}');
+        $this->eventTimestamp = $telemetry->createGauge('circuit_breaker.event.timestamp', 's');
     }
 
     public function call(callable $open, callable $close, ?callable $halfOpen = null): mixed
     {
-        $this->updateState();
-
-        if ($this->state === CircuitState::OPEN) {
-            return $open();
-        }
-
-        // Determine which callback to use
-        $callback = ($this->state === CircuitState::HALF_OPEN && $halfOpen !== null)
-            ? $halfOpen
-            : $close;
+        $initialState = $this->state;
+        $outcome = 'unknown';
+        $exceptionType = null;
+        $activeAttributes = $this->telemetryAttributes(['circuit_breaker.state' => $initialState->value]);
+        $this->activeCalls->add(1, $activeAttributes);
 
         try {
-            $result = $callback();
-            $this->onSuccess();
-            return $result;
+            $this->updateState();
+            $initialState = $this->state;
 
+            if ($this->state === CircuitState::OPEN) {
+                $outcome = 'short_circuit';
+                $this->fallbacks->add(1, $this->telemetryAttributes([
+                    'circuit_breaker.reason' => 'open',
+                    'circuit_breaker.state' => $this->state->value,
+                ]));
+
+                return $open();
+            }
+
+            // Determine which callback to use
+            $callback = ($this->state === CircuitState::HALF_OPEN && $halfOpen !== null)
+                ? $halfOpen
+                : $close;
+
+            try {
+                $result = $callback();
+                $this->onSuccess();
+                $outcome = 'success';
+                return $result;
+            } catch (\Throwable $e) {
+                $exceptionType = $e::class;
+                $this->callbackFailures->add(1, $this->telemetryAttributes([
+                    'exception.type' => $exceptionType,
+                    'circuit_breaker.state' => $this->state->value,
+                ]));
+                $this->onFailure();
+                $this->fallbacks->add(1, $this->telemetryAttributes([
+                    'circuit_breaker.reason' => 'failure',
+                    'circuit_breaker.state' => $this->state->value,
+                ]));
+                $outcome = 'fallback';
+                return $open();
+            }
         } catch (\Throwable $e) {
-            $this->onFailure();
-            return $open();
+            $exceptionType = $exceptionType ?? $e::class;
+            $outcome = $outcome === 'unknown' ? 'exception' : $outcome . '_exception';
+            throw $e;
+        } finally {
+            $attributes = $this->telemetryAttributes([
+                'circuit_breaker.initial_state' => $initialState->value,
+                'circuit_breaker.state' => $this->state->value,
+                'circuit_breaker.outcome' => $outcome,
+            ]);
+
+            if ($exceptionType !== null) {
+                $attributes['exception.type'] = $exceptionType;
+            }
+
+            $this->calls->add(1, $attributes);
+            if ($initialState === CircuitState::HALF_OPEN) {
+                $this->recordEvent('probe', 'probe: ' . $outcome, [
+                    'circuit_breaker.outcome' => $outcome,
+                ]);
+            }
+            $this->recordState();
+            $this->activeCalls->add(-1, $activeAttributes);
         }
     }
 
@@ -97,24 +174,30 @@ class CircuitBreaker
 
     private function transitionToOpen(): void
     {
+        $from = $this->state;
         $this->setOpenedAt(time());
         $this->setSuccesses(0);
         $this->setState(CircuitState::OPEN);
+        $this->recordTransition($from, CircuitState::OPEN);
     }
 
     private function transitionToHalfOpen(): void
     {
+        $from = $this->state;
         $this->setFailures(0);
         $this->setSuccesses(0);
         $this->setState(CircuitState::HALF_OPEN);
+        $this->recordTransition($from, CircuitState::HALF_OPEN);
     }
 
     private function transitionToClosed(): void
     {
+        $from = $this->state;
         $this->setFailures(0);
         $this->setSuccesses(0);
         $this->setOpenedAt(null);
         $this->setState(CircuitState::CLOSED);
+        $this->recordTransition($from, CircuitState::CLOSED);
     }
 
     private function syncFromCache(): void
@@ -223,15 +306,71 @@ class CircuitBreaker
         return $this->cacheKey . ':' . $field;
     }
 
+    /**
+     * @param array<non-empty-string, array<mixed>|bool|float|int|string|null> $attributes
+     * @return array<non-empty-string, array<mixed>|bool|float|int|string|null>
+     */
+    private function telemetryAttributes(array $attributes = []): array
+    {
+        return ['circuit_breaker.name' => $this->cacheKey] + $attributes;
+    }
+
+    private function recordTransition(CircuitState $from, CircuitState $to): void
+    {
+        if ($from === $to) {
+            return;
+        }
+
+        $this->transitions->add(1, $this->telemetryAttributes([
+            'circuit_breaker.from_state' => $from->value,
+            'circuit_breaker.to_state' => $to->value,
+        ]));
+        $this->recordEvent('transition', $from->value . ' -> ' . $to->value, [
+            'circuit_breaker.from_state' => $from->value,
+            'circuit_breaker.to_state' => $to->value,
+        ]);
+        $this->recordState();
+    }
+
+    /**
+     * @param array<non-empty-string, array<mixed>|bool|float|int|string|null> $attributes
+     */
+    private function recordEvent(string $type, string $name, array $attributes = []): void
+    {
+        $this->eventTimestamp->record(microtime(true), $this->telemetryAttributes([
+            'circuit_breaker.event' => $type,
+            'circuit_breaker.event_name' => $name,
+        ] + $attributes));
+    }
+
+    private function recordState(): void
+    {
+        $attributes = $this->telemetryAttributes();
+        $this->stateGauge->record($this->stateValue(), $attributes);
+        $this->failuresGauge->record($this->failures, $attributes);
+        $this->successesGauge->record($this->successes, $attributes);
+    }
+
+    private function stateValue(): int
+    {
+        return match ($this->state) {
+            CircuitState::CLOSED => 0,
+            CircuitState::OPEN => 1,
+            CircuitState::HALF_OPEN => 2,
+        };
+    }
+
     public function getState(): CircuitState
     {
         $this->updateState();
+        $this->recordState();
         return $this->state;
     }
 
     public function getFailureCount(): int
     {
         $this->syncFromCache();
+        $this->recordState();
 
         return $this->failures;
     }
@@ -239,6 +378,7 @@ class CircuitBreaker
     public function getSuccessCount(): int
     {
         $this->syncFromCache();
+        $this->recordState();
 
         return $this->successes;
     }
