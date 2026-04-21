@@ -161,7 +161,8 @@ $breaker = new CircuitBreaker(
     timeout: 60,
     successThreshold: 2,
     cacheKey: 'orders-api',
-    telemetry: $telemetry
+    telemetry: $telemetry,
+    metricPrefix: 'backend'
 );
 
 $result = $breaker->call(
@@ -172,9 +173,12 @@ $result = $breaker->call(
 $telemetry->collect();
 ```
 
+By default, metrics are emitted as `breaker.*`. Pass `metricPrefix` to namespace those metric names for a host application; for example `metricPrefix: 'backend'` emits `backend.breaker.calls`.
+
 You can also attach or replace the adapter after construction:
 
 ```php
+$breaker = new CircuitBreaker(metricPrefix: 'backend');
 $breaker->setTelemetry($telemetry);
 ```
 
@@ -211,6 +215,7 @@ This gradual recovery mechanism prevents overwhelming a service that's just star
 - `cache` (`?ChiragAgg5k\CircuitBreaker\Adapter`, default: `null`): Optional shared cache adapter
 - `cacheKey` (string, default: `default`): Cache namespace for one circuit's state
 - `telemetry` (`?Utopia\Telemetry\Adapter`, default: `null`): Optional telemetry adapter
+- `metricPrefix` (string, default: `''`): Optional prefix for telemetry metric names, such as `edge`
 
 ### Call Method Parameters
 

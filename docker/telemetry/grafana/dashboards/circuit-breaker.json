@@ -100,7 +100,7 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "circuit_breaker_state{circuit_breaker_name=\"$circuit\", circuit_breaker_state!~\".+\"}",
+          "expr": "breaker_state{circuit_breaker_name=\"$circuit\", circuit_breaker_state!~\".+\"}",
           "legendFormat": "{{circuit_breaker_name}}",
           "refId": "A"
         }
@@ -174,7 +174,7 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "sum(rate(circuit_breaker_calls_total{circuit_breaker_name=\"$circuit\"}[2m])) by (circuit_breaker_outcome)",
+          "expr": "sum(rate(breaker_calls_total{circuit_breaker_name=\"$circuit\"}[2m])) by (circuit_breaker_outcome)",
           "legendFormat": "{{circuit_breaker_outcome}}",
           "refId": "A"
         }
@@ -244,7 +244,7 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "sort_desc(max by (circuit_breaker_name, circuit_breaker_event, circuit_breaker_event_name, circuit_breaker_from_state, circuit_breaker_to_state, circuit_breaker_outcome) ((circuit_breaker_event_timestamp_seconds{circuit_breaker_name=\"$circuit\"} and ((time() - circuit_breaker_event_timestamp_seconds{circuit_breaker_name=\"$circuit\"}) < $__range_s)) * 1000))",
+          "expr": "sort_desc(max by (circuit_breaker_name, circuit_breaker_event, circuit_breaker_event_name, circuit_breaker_from_state, circuit_breaker_to_state, circuit_breaker_outcome) ((breaker_event_timestamp_seconds{circuit_breaker_name=\"$circuit\"} and ((time() - breaker_event_timestamp_seconds{circuit_breaker_name=\"$circuit\"}) < $__range_s)) * 1000))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -299,7 +299,7 @@
           "type": "prometheus",
           "uid": "Prometheus"
         },
-        "definition": "label_values(circuit_breaker_state, circuit_breaker_name)",
+        "definition": "label_values(breaker_state, circuit_breaker_name)",
         "hide": 0,
         "includeAll": false,
         "label": "Circuit",
@@ -307,7 +307,7 @@
         "name": "circuit",
         "options": [],
         "query": {
-          "query": "label_values(circuit_breaker_state, circuit_breaker_name)",
+          "query": "label_values(breaker_state, circuit_breaker_name)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
