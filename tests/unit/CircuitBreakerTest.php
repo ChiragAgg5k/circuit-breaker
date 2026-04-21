@@ -206,15 +206,41 @@ final class CircuitBreakerTest extends TestCase
         );
 
         self::assertSame('fallback', $result);
-        self::assertSame([1], $telemetry->counters['circuit_breaker.calls']->values);
-        self::assertSame([1], $telemetry->counters['circuit_breaker.callback_failures']->values);
-        self::assertSame([1], $telemetry->counters['circuit_breaker.fallbacks']->values);
-        self::assertSame([1], $telemetry->counters['circuit_breaker.transitions']->values);
-        self::assertSame([1, -1], $telemetry->upDownCounters['circuit_breaker.active_calls']->values);
-        self::assertSame([1], $telemetry->gauges['circuit_breaker.state']->values);
-        self::assertSame([1], $telemetry->gauges['circuit_breaker.failures']->values);
-        self::assertSame([0], $telemetry->gauges['circuit_breaker.successes']->values);
-        self::assertCount(1, $telemetry->gauges['circuit_breaker.event.timestamp']->values);
+        self::assertSame([1], $telemetry->counters['breaker.calls']->values);
+        self::assertSame([1], $telemetry->counters['breaker.callback_failures']->values);
+        self::assertSame([1], $telemetry->counters['breaker.fallbacks']->values);
+        self::assertSame([1], $telemetry->counters['breaker.transitions']->values);
+        self::assertSame([1, -1], $telemetry->upDownCounters['breaker.active_calls']->values);
+        self::assertSame([1], $telemetry->gauges['breaker.state']->values);
+        self::assertSame([1], $telemetry->gauges['breaker.failures']->values);
+        self::assertSame([0], $telemetry->gauges['breaker.successes']->values);
+        self::assertCount(1, $telemetry->gauges['breaker.event.timestamp']->values);
+    }
+
+    public function testPrefixesTelemetryMetricNames(): void
+    {
+        $telemetry = new TestTelemetry();
+        $breaker = new CircuitBreaker(threshold: 1, timeout: 30, successThreshold: 1, metricPrefix: '.edge.');
+        $breaker->setTelemetry($telemetry);
+
+        $result = $breaker->call(
+            open: static fn () => 'fallback',
+            close: static function (): void {
+                throw new \RuntimeException('failed');
+            }
+        );
+
+        self::assertSame('fallback', $result);
+        self::assertSame([1], $telemetry->counters['edge.breaker.calls']->values);
+        self::assertSame([1], $telemetry->counters['edge.breaker.callback_failures']->values);
+        self::assertSame([1], $telemetry->counters['edge.breaker.fallbacks']->values);
+        self::assertSame([1], $telemetry->counters['edge.breaker.transitions']->values);
+        self::assertSame([1, -1], $telemetry->upDownCounters['edge.breaker.active_calls']->values);
+        self::assertSame([1], $telemetry->gauges['edge.breaker.state']->values);
+        self::assertSame([1], $telemetry->gauges['edge.breaker.failures']->values);
+        self::assertSame([0], $telemetry->gauges['edge.breaker.successes']->values);
+        self::assertCount(1, $telemetry->gauges['edge.breaker.event.timestamp']->values);
+        self::assertArrayNotHasKey('breaker.calls', $telemetry->counters);
     }
 
     public function testInspectionMethodsDoNotEmitTelemetry(): void
@@ -225,10 +251,10 @@ final class CircuitBreakerTest extends TestCase
         self::assertSame(CircuitState::CLOSED, $breaker->getState());
         self::assertSame(0, $breaker->getFailureCount());
         self::assertSame(0, $breaker->getSuccessCount());
-        self::assertSame([], $telemetry->gauges['circuit_breaker.state']->values);
-        self::assertSame([], $telemetry->gauges['circuit_breaker.failures']->values);
-        self::assertSame([], $telemetry->gauges['circuit_breaker.successes']->values);
-        self::assertSame([], $telemetry->counters['circuit_breaker.calls']->values);
+        self::assertSame([], $telemetry->gauges['breaker.state']->values);
+        self::assertSame([], $telemetry->gauges['breaker.failures']->values);
+        self::assertSame([], $telemetry->gauges['breaker.successes']->values);
+        self::assertSame([], $telemetry->counters['breaker.calls']->values);
     }
 
     public function testActiveCallTelemetryUsesPostUpdateState(): void
@@ -360,7 +386,7 @@ final class ActiveCallTelemetry extends TestTelemetry
         ?string $description = null,
         array $advisory = []
     ): UpDownCounter {
-        if ($name !== 'circuit_breaker.active_calls') {
+        if ($name !== 'breaker.active_calls') {
             return parent::createUpDownCounter($name, $unit, $description, $advisory);
         }
 

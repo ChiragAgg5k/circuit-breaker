@@ -35,7 +35,8 @@ class CircuitBreaker
         private int $successThreshold = 2,
         private ?Adapter $cache = null,
         private string $cacheKey = 'default',
-        ?Telemetry $telemetry = null
+        ?Telemetry $telemetry = null,
+        private string $metricPrefix = ''
     ) {
         if ($this->cache !== null && $this->cacheKey === '') {
             throw new \InvalidArgumentException('Cache key must not be empty when a cache adapter is configured.');
@@ -49,15 +50,15 @@ class CircuitBreaker
 
     public function setTelemetry(Telemetry $telemetry): void
     {
-        $this->calls = $telemetry->createCounter('circuit_breaker.calls', '{call}');
-        $this->callbackFailures = $telemetry->createCounter('circuit_breaker.callback_failures', '{failure}');
-        $this->fallbacks = $telemetry->createCounter('circuit_breaker.fallbacks', '{fallback}');
-        $this->transitions = $telemetry->createCounter('circuit_breaker.transitions', '{transition}');
-        $this->activeCalls = $telemetry->createUpDownCounter('circuit_breaker.active_calls', '{call}');
-        $this->stateGauge = $telemetry->createGauge('circuit_breaker.state');
-        $this->failuresGauge = $telemetry->createGauge('circuit_breaker.failures', '{failure}');
-        $this->successesGauge = $telemetry->createGauge('circuit_breaker.successes', '{success}');
-        $this->eventTimestamp = $telemetry->createGauge('circuit_breaker.event.timestamp', 's');
+        $this->calls = $telemetry->createCounter($this->metricName('breaker.calls'), '{call}');
+        $this->callbackFailures = $telemetry->createCounter($this->metricName('breaker.callback_failures'), '{failure}');
+        $this->fallbacks = $telemetry->createCounter($this->metricName('breaker.fallbacks'), '{fallback}');
+        $this->transitions = $telemetry->createCounter($this->metricName('breaker.transitions'), '{transition}');
+        $this->activeCalls = $telemetry->createUpDownCounter($this->metricName('breaker.active_calls'), '{call}');
+        $this->stateGauge = $telemetry->createGauge($this->metricName('breaker.state'));
+        $this->failuresGauge = $telemetry->createGauge($this->metricName('breaker.failures'), '{failure}');
+        $this->successesGauge = $telemetry->createGauge($this->metricName('breaker.successes'), '{success}');
+        $this->eventTimestamp = $telemetry->createGauge($this->metricName('breaker.event.timestamp'), 's');
     }
 
     public function call(callable $open, callable $close, ?callable $halfOpen = null): mixed
@@ -308,6 +309,13 @@ class CircuitBreaker
     private function cacheField(string $field): string
     {
         return $this->cacheKey . ':' . $field;
+    }
+
+    private function metricName(string $name): string
+    {
+        $prefix = trim($this->metricPrefix, '.');
+
+        return $prefix === '' ? $name : $prefix . '.' . $name;
     }
 
     /**
