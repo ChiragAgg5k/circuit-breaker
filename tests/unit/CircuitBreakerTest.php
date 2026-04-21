@@ -7,6 +7,7 @@ use ChiragAgg5k\CircuitBreaker\Adapter;
 use ChiragAgg5k\CircuitState;
 use PHPUnit\Framework\TestCase;
 use Utopia\Telemetry\Adapter\Test as TestTelemetry;
+use Utopia\Telemetry\UpDownCounter;
 
 final class CircuitBreakerTest extends TestCase
 {
@@ -210,10 +211,88 @@ final class CircuitBreakerTest extends TestCase
         self::assertSame([1], $telemetry->counters['circuit_breaker.fallbacks']->values);
         self::assertSame([1], $telemetry->counters['circuit_breaker.transitions']->values);
         self::assertSame([1, -1], $telemetry->upDownCounters['circuit_breaker.active_calls']->values);
-        self::assertSame([1, 1], $telemetry->gauges['circuit_breaker.state']->values);
-        self::assertSame([1, 1], $telemetry->gauges['circuit_breaker.failures']->values);
-        self::assertSame([0, 0], $telemetry->gauges['circuit_breaker.successes']->values);
+        self::assertSame([1], $telemetry->gauges['circuit_breaker.state']->values);
+        self::assertSame([1], $telemetry->gauges['circuit_breaker.failures']->values);
+        self::assertSame([0], $telemetry->gauges['circuit_breaker.successes']->values);
         self::assertCount(1, $telemetry->gauges['circuit_breaker.event.timestamp']->values);
+    }
+
+    public function testInspectionMethodsDoNotEmitTelemetry(): void
+    {
+        $telemetry = new TestTelemetry();
+        $breaker = new CircuitBreaker(telemetry: $telemetry);
+
+        self::assertSame(CircuitState::CLOSED, $breaker->getState());
+        self::assertSame(0, $breaker->getFailureCount());
+        self::assertSame(0, $breaker->getSuccessCount());
+        self::assertSame([], $telemetry->gauges['circuit_breaker.state']->values);
+        self::assertSame([], $telemetry->gauges['circuit_breaker.failures']->values);
+        self::assertSame([], $telemetry->gauges['circuit_breaker.successes']->values);
+        self::assertSame([], $telemetry->counters['circuit_breaker.calls']->values);
+    }
+
+    public function testActiveCallTelemetryUsesPostUpdateState(): void
+    {
+        $store = new ActiveCallAttributeStore();
+        $telemetry = new ActiveCallTelemetry($store);
+        $cache = new class () implements Adapter {
+            /**
+             * @var array<string, int|string>
+             */
+            private array $values = [
+                'users-api:state' => 'open',
+                'users-api:failures' => 1,
+                'users-api:successes' => 0,
+            ];
+
+            public function __construct()
+            {
+                $this->values['users-api:opened_at'] = time() - 10;
+            }
+
+            public function get(string $key): int|string|null
+            {
+                return $this->values[$key] ?? null;
+            }
+
+            public function set(string $key, int|string $value): void
+            {
+                $this->values[$key] = $value;
+            }
+
+            public function increment(string $key, int $by = 1): int
+            {
+                $value = (int) ($this->values[$key] ?? 0);
+                $value += $by;
+                $this->values[$key] = $value;
+
+                return $value;
+            }
+
+            public function delete(string $key): void
+            {
+                unset($this->values[$key]);
+            }
+        };
+        $breaker = new CircuitBreaker(
+            threshold: 1,
+            timeout: 0,
+            successThreshold: 1,
+            cache: $cache,
+            cacheKey: 'users-api',
+            telemetry: $telemetry
+        );
+
+        $result = $breaker->call(
+            open: static fn () => 'fallback',
+            close: static fn () => 'closed',
+            halfOpen: static fn () => 'probe'
+        );
+
+        self::assertSame('probe', $result);
+        self::assertCount(2, $store->attributes);
+        self::assertSame(CircuitState::HALF_OPEN->value, $store->attributes[0]['circuit_breaker.state']);
+        self::assertSame(CircuitState::HALF_OPEN->value, $store->attributes[1]['circuit_breaker.state']);
     }
 
     public function testRejectsEmptyCacheKeyWhenCacheIsConfigured(): void
@@ -255,5 +334,51 @@ final class CircuitBreakerTest extends TestCase
                 unset($this->values[$key]);
             }
         };
+    }
+}
+
+final class ActiveCallAttributeStore
+{
+    /**
+     * @var list<array<non-empty-string, array<mixed>|bool|float|int|string|null>>
+     */
+    public array $attributes = [];
+}
+
+final class ActiveCallTelemetry extends TestTelemetry
+{
+    public function __construct(private ActiveCallAttributeStore $store)
+    {
+    }
+
+    /**
+     * @param array<string, mixed> $advisory
+     */
+    public function createUpDownCounter(
+        string $name,
+        ?string $unit = null,
+        ?string $description = null,
+        array $advisory = []
+    ): UpDownCounter {
+        if ($name !== 'circuit_breaker.active_calls') {
+            return parent::createUpDownCounter($name, $unit, $description, $advisory);
+        }
+
+        $counter = new class ($this->store) extends UpDownCounter {
+            public function __construct(private ActiveCallAttributeStore $store)
+            {
+            }
+
+            /**
+             * @param iterable<non-empty-string, array<mixed>|bool|float|int|string|null> $attributes
+             */
+            public function add(float|int $amount, iterable $attributes = []): void
+            {
+                $this->store->attributes[] = iterator_to_array($attributes);
+            }
+        };
+        $this->upDownCounters[$name] = $counter;
+
+        return $counter;
     }
 }

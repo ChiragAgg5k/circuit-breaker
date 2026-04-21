@@ -4,7 +4,6 @@ namespace ChiragAgg5k;
 
 use ChiragAgg5k\CircuitBreaker\Adapter;
 use Utopia\Telemetry\Adapter as Telemetry;
-use Utopia\Telemetry\Adapter\None as NoTelemetry;
 use Utopia\Telemetry\Counter;
 use Utopia\Telemetry\Gauge;
 use Utopia\Telemetry\UpDownCounter;
@@ -20,15 +19,15 @@ class CircuitBreaker
     private int $failures = 0;
     private int $successes = 0;
     private ?int $openedAt = null;
-    private Counter $calls;
-    private Counter $callbackFailures;
-    private Counter $fallbacks;
-    private Counter $transitions;
-    private UpDownCounter $activeCalls;
-    private Gauge $stateGauge;
-    private Gauge $failuresGauge;
-    private Gauge $successesGauge;
-    private Gauge $eventTimestamp;
+    private ?Counter $calls = null;
+    private ?Counter $callbackFailures = null;
+    private ?Counter $fallbacks = null;
+    private ?Counter $transitions = null;
+    private ?UpDownCounter $activeCalls = null;
+    private ?Gauge $stateGauge = null;
+    private ?Gauge $failuresGauge = null;
+    private ?Gauge $successesGauge = null;
+    private ?Gauge $eventTimestamp = null;
 
     public function __construct(
         private int $threshold = 3,
@@ -42,7 +41,9 @@ class CircuitBreaker
             throw new \InvalidArgumentException('Cache key must not be empty when a cache adapter is configured.');
         }
 
-        $this->setTelemetry($telemetry ?? new NoTelemetry());
+        if ($telemetry !== null) {
+            $this->setTelemetry($telemetry);
+        }
         $this->syncFromCache();
     }
 
@@ -64,16 +65,17 @@ class CircuitBreaker
         $initialState = $this->state;
         $outcome = 'unknown';
         $exceptionType = null;
-        $activeAttributes = $this->telemetryAttributes(['circuit_breaker.state' => $initialState->value]);
-        $this->activeCalls->add(1, $activeAttributes);
+        $activeAttributes = null;
 
         try {
             $this->updateState();
             $initialState = $this->state;
+            $activeAttributes = $this->telemetryAttributes(['circuit_breaker.state' => $initialState->value]);
+            $this->activeCalls?->add(1, $activeAttributes);
 
             if ($this->state === CircuitState::OPEN) {
                 $outcome = 'short_circuit';
-                $this->fallbacks->add(1, $this->telemetryAttributes([
+                $this->fallbacks?->add(1, $this->telemetryAttributes([
                     'circuit_breaker.reason' => 'open',
                     'circuit_breaker.state' => $this->state->value,
                 ]));
@@ -93,12 +95,12 @@ class CircuitBreaker
                 return $result;
             } catch (\Throwable $e) {
                 $exceptionType = $e::class;
-                $this->callbackFailures->add(1, $this->telemetryAttributes([
+                $this->callbackFailures?->add(1, $this->telemetryAttributes([
                     'exception.type' => $exceptionType,
                     'circuit_breaker.state' => $this->state->value,
                 ]));
                 $this->onFailure();
-                $this->fallbacks->add(1, $this->telemetryAttributes([
+                $this->fallbacks?->add(1, $this->telemetryAttributes([
                     'circuit_breaker.reason' => 'failure',
                     'circuit_breaker.state' => $this->state->value,
                 ]));
@@ -120,14 +122,16 @@ class CircuitBreaker
                 $attributes['exception.type'] = $exceptionType;
             }
 
-            $this->calls->add(1, $attributes);
+            $this->calls?->add(1, $attributes);
             if ($initialState === CircuitState::HALF_OPEN) {
                 $this->recordEvent('probe', 'probe: ' . $outcome, [
                     'circuit_breaker.outcome' => $outcome,
                 ]);
             }
             $this->recordState();
-            $this->activeCalls->add(-1, $activeAttributes);
+            if ($activeAttributes !== null) {
+                $this->activeCalls?->add(-1, $activeAttributes);
+            }
         }
     }
 
@@ -321,7 +325,7 @@ class CircuitBreaker
             return;
         }
 
-        $this->transitions->add(1, $this->telemetryAttributes([
+        $this->transitions?->add(1, $this->telemetryAttributes([
             'circuit_breaker.from_state' => $from->value,
             'circuit_breaker.to_state' => $to->value,
         ]));
@@ -329,7 +333,6 @@ class CircuitBreaker
             'circuit_breaker.from_state' => $from->value,
             'circuit_breaker.to_state' => $to->value,
         ]);
-        $this->recordState();
     }
 
     /**
@@ -337,7 +340,7 @@ class CircuitBreaker
      */
     private function recordEvent(string $type, string $name, array $attributes = []): void
     {
-        $this->eventTimestamp->record(microtime(true), $this->telemetryAttributes([
+        $this->eventTimestamp?->record(microtime(true), $this->telemetryAttributes([
             'circuit_breaker.event' => $type,
             'circuit_breaker.event_name' => $name,
         ] + $attributes));
@@ -346,9 +349,9 @@ class CircuitBreaker
     private function recordState(): void
     {
         $attributes = $this->telemetryAttributes();
-        $this->stateGauge->record($this->stateValue(), $attributes);
-        $this->failuresGauge->record($this->failures, $attributes);
-        $this->successesGauge->record($this->successes, $attributes);
+        $this->stateGauge?->record($this->stateValue(), $attributes);
+        $this->failuresGauge?->record($this->failures, $attributes);
+        $this->successesGauge?->record($this->successes, $attributes);
     }
 
     private function stateValue(): int
@@ -363,14 +366,12 @@ class CircuitBreaker
     public function getState(): CircuitState
     {
         $this->updateState();
-        $this->recordState();
         return $this->state;
     }
 
     public function getFailureCount(): int
     {
         $this->syncFromCache();
-        $this->recordState();
 
         return $this->failures;
     }
@@ -378,7 +379,6 @@ class CircuitBreaker
     public function getSuccessCount(): int
     {
         $this->syncFromCache();
-        $this->recordState();
 
         return $this->successes;
     }

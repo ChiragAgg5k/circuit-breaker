@@ -21,7 +21,7 @@ A Circuit Breaker is a design pattern used to detect failures and prevent an app
 - ✅ State inspection methods
 - ✅ Simple and lightweight implementation
 - ✅ Optional Redis and Swoole Table cache adapters for shared state
-- ✅ Native telemetry metrics through `utopia-php/telemetry`
+- ✅ Native telemetry metrics through optional `utopia-php/telemetry` adapters
 - ✅ PSR-4 autoloading compatible
 - ✅ PHP 8.2+ support with enums
 
@@ -139,7 +139,11 @@ $breaker = new CircuitBreaker(
 
 ### Telemetry
 
-Circuit breakers use `Utopia\Telemetry\Adapter\None` by default. Pass any `utopia-php/telemetry` adapter to emit counters and gauges for calls, fallbacks, callback failures, transitions, state, failure counts, success counts, active calls, and transition/probe events.
+Telemetry is opt-in. The `telemetry` constructor argument defaults to `null`, which emits no metrics and does not require `utopia-php/telemetry` at runtime. Install `utopia-php/telemetry` and pass any adapter to emit counters and gauges for calls, fallbacks, callback failures, transitions, state, failure counts, success counts, active calls, and transition/probe events.
+
+```bash
+composer require utopia-php/telemetry
+```
 
 ```php
 use ChiragAgg5k\CircuitBreaker;
@@ -237,7 +241,7 @@ $breaker->getSuccessCount();  // Current success count (in half-open state)
 ## Requirements
 
 - PHP 8.2 or higher
-- `ext-opentelemetry` and `ext-protobuf` for `utopia-php/telemetry`
+- Optional: `utopia-php/telemetry`, `ext-opentelemetry`, and `ext-protobuf` for OpenTelemetry metrics and the local telemetry demo
 - Optional: `ext-redis` for `ChiragAgg5k\CircuitBreaker\Adapter\Redis`
 - Optional: `ext-swoole` for `ChiragAgg5k\CircuitBreaker\Adapter\SwooleTable`
 

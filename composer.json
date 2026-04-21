@@ -11,15 +11,18 @@
         }
     ],
     "require": {
-        "php": "^8.2",
-        "utopia-php/telemetry": "0.2.*"
+        "php": "^8.2"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0",
         "phpstan/phpstan": "^2.1",
-        "laravel/pint": "^1.29"
+        "laravel/pint": "^1.29",
+        "utopia-php/telemetry": "0.2.*"
     },
     "suggest": {
+        "utopia-php/telemetry": "Required when passing telemetry adapters or running the local telemetry demo.",
+        "ext-opentelemetry": "Required by utopia-php/telemetry when using OpenTelemetry metrics.",
+        "ext-protobuf": "Required by utopia-php/telemetry when using OpenTelemetry metrics.",
         "ext-redis": "Required when using ChiragAgg5k\\CircuitBreaker\\Adapter\\Redis with the phpredis extension.",
         "ext-swoole": "Required when using ChiragAgg5k\\CircuitBreaker\\Adapter\\SwooleTable."
     },
